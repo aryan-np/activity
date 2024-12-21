@@ -1,66 +1,76 @@
-#!/usr/bin/env python
-import argparse
 import os
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from random import randint
 from subprocess import Popen
-import sys
 
 
-def main(def_args=sys.argv[1:]):
-    args = arguments(def_args)
-    curr_date = datetime.now()
-    directory = 'repository-' + curr_date.strftime('%Y-%m-%d-%H-%M-%S')
-    repository = args.repository
-    user_name = args.user_name
-    user_email = args.user_email
-    if repository is not None:
-        start = repository.rfind('/') + 1
-        end = repository.rfind('.')
-        directory = repository[start:end]
-    no_weekends = args.no_weekends
-    frequency = args.frequency
-    days_before = args.days_before
-    if days_before < 0:
-        sys.exit('days_before must not be negative')
-    days_after = args.days_after
-    if days_after < 0:
-        sys.exit('days_after must not be negative')
+def main():
+    # Ask for start and end dates
+    date_input = input("Enter start and end dates in the format 'YYYY MM DD YYYY MM DD': ").strip()
+    try:
+        start_year, start_month, start_day, end_year, end_month, end_day = map(int, date_input.split())
+        start_date = datetime(start_year, start_month, start_day)
+        end_date = datetime(end_year, end_month, end_day)
+        if start_date > end_date:
+            raise ValueError("Start date must be earlier than or equal to end date.")
+    except ValueError as e:
+        print(f"Invalid date input: {e}")
+        return
+
+    # Configuration dictionary for other parameters
+    config = {
+        "max_commits": 15,  # Maximum commits per day
+        "frequency": 80,  # Percentage of days to commit
+        "repository": None,  # Remote repository URL (set to None if not used)
+        "user_name": "Your Name",  # Override Git user.name (set to None for default)
+        "user_email": "youremail@example.com",  # Override Git user.email (set to None for default)
+        "daily_start_time": 9,  # Start hour for daily commits (0-23)
+        "daily_end_time": 17,  # End hour for daily commits (0-23)
+    }
+
+    daily_start_time = config["daily_start_time"]
+    daily_end_time = config["daily_end_time"]
+    if daily_start_time < 0 or daily_end_time > 23 or daily_start_time >= daily_end_time:
+        raise ValueError("Invalid daily time range")
+
+    # Directory and Git initialization
+    directory = f"repository-{start_date.strftime('%Y-%m-%d')}"
+    if config["repository"]:
+        start = config["repository"].rfind("/") + 1
+        end = config["repository"].rfind(".")
+        directory = config["repository"][start:end]
+
     os.mkdir(directory)
     os.chdir(directory)
-    run(['git', 'init', '-b', 'main'])
+    run(["git", "init", "-b", "main"])
 
-    if user_name is not None:
-        run(['git', 'config', 'user.name', user_name])
+    if config["user_name"]:
+        run(["git", "config", "user.name", config["user_name"]])
+    if config["user_email"]:
+        run(["git", "config", "user.email", config["user_email"]])
 
-    if user_email is not None:
-        run(['git', 'config', 'user.email', user_email])
-
-    start_date = curr_date.replace(hour=20, minute=0) - timedelta(days_before)
-    for day in (start_date + timedelta(n) for n
-                in range(days_before + days_after)):
-        if (not no_weekends or day.weekday() < 5) \
-                and randint(0, 100) < frequency:
-            for commit_time in (day + timedelta(minutes=m)
-                                for m in range(contributions_per_day(args))):
+    # Generate commits
+    curr_date = start_date
+    while curr_date <= end_date:
+        if randint(0, 100) < config["frequency"]:
+            for commit_time in generate_commit_times(curr_date, daily_start_time, daily_end_time, config):
                 contribute(commit_time)
+        curr_date += timedelta(days=1)
 
-    if repository is not None:
-        run(['git', 'remote', 'add', 'origin', repository])
-        run(['git', 'branch', '-M', 'main'])
-        run(['git', 'push', '-u', 'origin', 'main'])
+    # Push to remote if specified
+    if config["repository"]:
+        run(["git", "remote", "add", "origin", config["repository"]])
+        run(["git", "branch", "-M", "main"])
+        run(["git", "push", "-u", "origin", "main"])
 
-    print('\nRepository generation ' +
-          '\x1b[6;30;42mcompleted successfully\x1b[0m!')
+    print("\nRepository generation completed successfully!")
 
 
 def contribute(date):
-    with open(os.path.join(os.getcwd(), 'README.md'), 'a') as file:
-        file.write(message(date) + '\n\n')
-    run(['git', 'add', '.'])
-    run(['git', 'commit', '-m', '"%s"' % message(date),
-         '--date', date.strftime('"%Y-%m-%d %H:%M:%S"')])
+    with open(os.path.join(os.getcwd(), "README.md"), "a") as file:
+        file.write(message(date) + "\n\n")
+    run(["git", "add", "."])
+    run(["git", "commit", "-m", f'"{message(date)}"', "--date", date.strftime('"%Y-%m-%d %H:%M:%S"')])
 
 
 def run(commands):
@@ -68,60 +78,27 @@ def run(commands):
 
 
 def message(date):
-    return date.strftime('Contribution: %Y-%m-%d %H:%M')
+    return date.strftime("Contribution: %Y-%m-%d %H:%M")
 
 
-def contributions_per_day(args):
-    max_c = args.max_commits
-    if max_c > 20:
-        max_c = 20
-    if max_c < 1:
-        max_c = 1
-    return randint(1, max_c)
-
-
-def arguments(argsval):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-nw', '--no_weekends',
-                        required=False, action='store_true', default=False,
-                        help="""do not commit on weekends""")
-    parser.add_argument('-mc', '--max_commits', type=int, default=10,
-                        required=False, help="""Defines the maximum amount of
-                        commits a day the script can make. Accepts a number
-                        from 1 to 20. If N is specified the script commits
-                        from 1 to N times a day. The exact number of commits
-                        is defined randomly for each day. The default value
-                        is 10.""")
-    parser.add_argument('-fr', '--frequency', type=int, default=80,
-                        required=False, help="""Percentage of days when the
-                        script performs commits. If N is specified, the script
-                        will commit N%% of days in a year. The default value
-                        is 80.""")
-    parser.add_argument('-r', '--repository', type=str, required=False,
-                        help="""A link on an empty non-initialized remote git
-                        repository. If specified, the script pushes the changes
-                        to the repository. The link is accepted in SSH or HTTPS
-                        format. For example: git@github.com:user/repo.git or
-                        https://github.com/user/repo.git""")
-    parser.add_argument('-un', '--user_name', type=str, required=False,
-                        help="""Overrides user.name git config.
-                        If not specified, the global config is used.""")
-    parser.add_argument('-ue', '--user_email', type=str, required=False,
-                        help="""Overrides user.email git config.
-                        If not specified, the global config is used.""")
-    parser.add_argument('-db', '--days_before', type=int, default=365,
-                        required=False, help="""Specifies the number of days
-                        before the current date when the script will start
-                        adding commits. For example: if it is set to 30 the
-                        first commit date will be the current date minus 30
-                        days.""")
-    parser.add_argument('-da', '--days_after', type=int, default=0,
-                        required=False, help="""Specifies the number of days
-                        after the current date until which the script will be
-                        adding commits. For example: if it is set to 30 the
-                        last commit will be on a future date which is the
-                        current date plus 30 days.""")
-    return parser.parse_args(argsval)
+def generate_commit_times(date, daily_start_time, daily_end_time, config):
+    """Generate commit times for a specific date."""
+    start_hour, end_hour = daily_start_time, daily_end_time
+    commits = []
+    
+    # Generate a random number of commits within the allowed range
+    num_commits = randint(1, config['max_commits'])
+    
+    for _ in range(num_commits):
+        hour = randint(start_hour, end_hour)
+        
+        # Generate a random minute value within the valid range
+        minute = randint(0, 59)
+        
+        # Add the commit time
+        commits.append(date.replace(hour=hour, minute=minute, second=0))
+    
+    return commits
 
 
 if __name__ == "__main__":
